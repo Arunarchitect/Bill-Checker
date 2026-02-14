@@ -8,22 +8,24 @@ echo ============================================
 echo.
 
 REM ------------------------------------------------
-REM Step 1: Check if Python is installed
+REM Step 1: Check if Python (via py launcher) exists
 REM ------------------------------------------------
 echo Checking for Python installation...
-python --version >nul 2>&1
+py -3 --version >nul 2>&1
 
 if errorlevel 1 (
     echo.
-    echo ❌ Python is not installed or not in PATH.
+    echo ERROR: Python 3 is not installed.
     echo Please install Python from https://www.python.org/
-    echo Make sure to check "Add Python to PATH"
+    echo Make sure to enable:
+    echo  - Add Python to PATH
+    echo  - Install launcher for all users
     echo.
     pause
     exit /b
 )
 
-echo ✅ Python detected.
+echo Python detected successfully.
 echo.
 
 REM ------------------------------------------------
@@ -31,13 +33,13 @@ REM Step 2: Create virtual environment if missing
 REM ------------------------------------------------
 if not exist venv (
     echo Creating virtual environment...
-    python -m venv venv
+    py -3 -m venv venv
     if errorlevel 1 (
-        echo ❌ Failed to create virtual environment.
+        echo ERROR: Failed to create virtual environment.
         pause
         exit /b
     )
-    echo ✅ Virtual environment created.
+    echo Virtual environment created.
 ) else (
     echo Virtual environment already exists.
 )
@@ -48,32 +50,32 @@ REM ------------------------------------------------
 REM Step 3: Activate virtual environment
 REM ------------------------------------------------
 echo Activating virtual environment...
-call venv\Scripts\activate
+call venv\Scripts\activate.bat
 
 if errorlevel 1 (
-    echo ❌ Failed to activate virtual environment.
+    echo ERROR: Failed to activate virtual environment.
     pause
     exit /b
 )
 
-echo ✅ Virtual environment activated.
+echo Virtual environment activated.
 echo.
 
 REM ------------------------------------------------
-REM Step 4: Install required packages
+REM Step 4: Install required packages inside venv
 REM ------------------------------------------------
-echo Checking and installing required packages...
-pip install --upgrade pip >nul 2>&1
-pip install pandas >nul 2>&1
+echo Installing / Checking required packages...
+
+python -m pip install --upgrade pip
+python -m pip install pandas
 
 if errorlevel 1 (
-    echo ❌ Failed to install required packages.
-    echo Please check your internet connection.
+    echo ERROR: Package installation failed.
     pause
     exit /b
 )
 
-echo ✅ Required packages ready.
+echo Packages ready.
 echo.
 
 REM ------------------------------------------------
@@ -86,10 +88,10 @@ python gui.py
 
 if errorlevel 1 (
     echo.
-    echo ❌ Application closed due to an error.
+    echo Application closed due to an error.
 ) else (
     echo.
-    echo ✅ Application closed normally.
+    echo Application closed normally.
 )
 
 echo.
