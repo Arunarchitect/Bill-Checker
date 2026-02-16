@@ -9,8 +9,7 @@ venv/
 env/
 .env/
 
-# CSV files (optional: ignore input/output if sensitive)
-*.csv
+
 
 # Generated SVG output
 *.svg
