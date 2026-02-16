@@ -1,6 +1,6 @@
 """
 Bill Validation GUI Application
-Handles the user interface and display
+Handles the user interface and display – enhanced for readability.
 """
 
 import tkinter as tk
@@ -14,7 +14,7 @@ class BillValidationGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Bill Validation Tool")
-        self.root.geometry("900x800")
+        self.root.geometry("950x850")
         
         self.bill_file_path = tk.StringVar(value="Bill.csv")
         self.exclude_file_path = tk.StringVar(value="exclude_patterns.csv")
@@ -126,56 +126,75 @@ class BillValidationGUI:
         self.root.update()
     
     def format_output(self, validation_result, percent_used):
-        """Format validation results with rules list and per-bill status table"""
+        """Format validation results in a clear, human‑friendly way."""
         self.output_box.delete(1.0, tk.END)
         
         # Global column check
         if not validation_result["global_columns_ok"]:
             self.output_box.insert(tk.END, 
-                f"❌ Missing Columns: {validation_result['missing_columns']}\n\n")
+                "❌ MISSING COLUMNS\n" +
+                "="*60 + "\n" +
+                f"The following required columns are missing from the bill file:\n" +
+                f"   {', '.join(validation_result['missing_columns'])}\n\n")
             return  # can't proceed if columns missing
         
-        self.output_box.insert(tk.END, "✅ All required columns present.\n\n")
+        self.output_box.insert(tk.END, 
+            "✅ COLUMN CHECK PASSED\n" +
+            "="*60 + "\n" +
+            "All required columns are present in the bill file.\n\n")
         
         # Exclusion patterns
         exclude_item = validation_result["exclude_item_patterns"]
         exclude_work = validation_result["exclude_workcode_patterns"]
         if exclude_item or exclude_work:
-            self.output_box.insert(tk.END, "📋 Loaded exclusion patterns:\n")
+            self.output_box.insert(tk.END, "📋 EXCLUSION PATTERNS\n")
+            self.output_box.insert(tk.END, "-"*40 + "\n")
             if exclude_item:
-                self.output_box.insert(tk.END, f"   Item patterns: {exclude_item}\n")
+                self.output_box.insert(tk.END, f"   Items excluded from base amount: {', '.join(exclude_item)}\n")
             if exclude_work:
-                self.output_box.insert(tk.END, f"   Work code patterns: {exclude_work}\n")
+                self.output_box.insert(tk.END, f"   Work codes excluded: {', '.join(exclude_work)}\n")
             self.output_box.insert(tk.END, "\n")
         
         # Allowed values
         allowed_dict = validation_result["allowed_dict"]
         if allowed_dict:
-            self.output_box.insert(tk.END, "📋 Loaded allowed values for columns:\n")
+            self.output_box.insert(tk.END, "📋 ALLOWED VALUES PER COLUMN\n")
+            self.output_box.insert(tk.END, "-"*40 + "\n")
             for col, values in sorted(allowed_dict.items()):
-                self.output_box.insert(tk.END, f"   {col}: {sorted(values)}\n")
+                # Format nicely: show 'any' or 'blank' prominently
+                if 'any' in values and len(values) == 1:
+                    desc = "any value allowed"
+                elif 'blank' in values and len(values) == 1:
+                    desc = "empty cells allowed"
+                else:
+                    # Remove 'any' and 'blank' from display if they exist alongside other values
+                    display_vals = [v for v in values if v not in ('any','blank')]
+                    desc = f"must be one of: {', '.join(sorted(display_vals))}"
+                    if 'blank' in values:
+                        desc += " (empty cells also allowed)"
+                    if 'any' in values:
+                        desc += " (any non‑empty value allowed)"
+                self.output_box.insert(tk.END, f"   {col}: {desc}\n")
             self.output_box.insert(tk.END, "\n")
-        else:
-            self.output_box.insert(tk.END, "⚠ No allowed values loaded – check will fail if any column has restrictions.\n\n")
         
-        # Define check rules
-        check_rules = {
-            "columns_present": "All required columns are present in the file",
-            "no_missing_values": "No missing (empty) values in required columns for this bill",
-            "coordination_correct": f"Coordination charge is correct within tolerance (±{validation_result.get('tolerance',10)}) using {percent_used}% of base amount",
-            "allowed_values": "All values in specified columns belong to the allowed set (mandatory check)",
-            "numeric_values": "Numeric columns (Cost, Rate per unit, Quantity) contain only numbers"
-        }
-        
-        # Display rules
-        self.output_box.insert(tk.END, "📋 VALIDATION RULES\n")
-        self.output_box.insert(tk.END, "="*60 + "\n")
-        for check, desc in check_rules.items():
-            self.output_box.insert(tk.END, f"• {check}: {desc}\n")
+        # Validation rules summary
+        self.output_box.insert(tk.END, "📋 VALIDATION CHECKS\n")
+        self.output_box.insert(tk.END, "-"*40 + "\n")
+        rules = [
+            "• columns_present     – all required columns exist",
+            "• no_missing_values   – no empty cells in required columns (unless 'blank' allowed)",
+            f"• coordination_correct – coordination charge = {percent_used}% of base amount (±{validation_result.get('tolerance',10)})",
+            "• allowed_values      – each value belongs to its column's allowed set",
+            "• numeric_values      – Cost, Rate per unit, Quantity contain only numbers"
+        ]
+        for rule in rules:
+            self.output_box.insert(tk.END, f"  {rule}\n")
         self.output_box.insert(tk.END, "\n")
         
         total_bills = validation_result['total_bills']
-        self.output_box.insert(tk.END, f"Checking {total_bills} bills with {percent_used}% coordination...\n\n")
+        self.output_box.insert(tk.END, 
+            f"🔍 ANALYZING {total_bills} BILL{'S' if total_bills!=1 else ''} "
+            f"(coordination = {percent_used}%)\n\n")
         
         passed_bills = []
         failed_bills = []
@@ -190,62 +209,73 @@ class BillValidationGUI:
             else:
                 failed_bills.append(bill)
             
-            # Bill header
-            status = "✅" if bill_passed else "❌"
-            self.output_box.insert(tk.END, f"{status} Bill {bill}\n")
-            self.output_box.insert(tk.END, "-"*40 + "\n")
+            # Bill header with clear pass/fail icon
+            status = "✅ PASS" if bill_passed else "❌ FAIL"
+            self.output_box.insert(tk.END, f"{status}  Bill {bill}\n")
+            self.output_box.insert(tk.END, "  " + "-"*50 + "\n")
             
-            # Table of check results
-            for check_name, passed in checks.items():
+            # Table of check results with details
+            check_order = ['columns_present', 'no_missing_values', 'allowed_values', 'numeric_values', 'coordination_correct']
+            for check_name in check_order:
+                passed = checks.get(check_name, False)
                 icon = "✅" if passed else "❌"
                 self.output_box.insert(tk.END, f"  {icon} {check_name}\n")
                 
-                # If failed, add failure details indented
+                # Add detailed explanations for failures
                 if not passed:
                     if check_name == "no_missing_values":
-                        missing = result["details"]["missing_values"]
+                        missing = result["details"].get("missing_values", {})
                         for col, rows in missing.items():
-                            self.output_box.insert(tk.END, f"      Missing in '{col}' at rows: {rows}\n")
+                            rows_str = ', '.join(str(r) for r in rows)
+                            self.output_box.insert(tk.END, 
+                                f"      → Column '{col}' has empty cells at row(s): {rows_str}\n")
+                    elif check_name == "allowed_values":
+                        violations = result["details"].get("allowed_violations", {})
+                        for col, vals in violations.items():
+                            vals_str = ', '.join(f"'{v}'" for v in vals)
+                            self.output_box.insert(tk.END, 
+                                f"      → Column '{col}' contains invalid value(s): {vals_str}\n")
+                    elif check_name == "numeric_values":
+                        violations = result["details"].get("numeric_violations", {})
+                        for col, rows in violations.items():
+                            rows_str = ', '.join(str(r) for r in rows)
+                            self.output_box.insert(tk.END, 
+                                f"      → Column '{col}' has non‑numeric entries at row(s): {rows_str}\n")
                     elif check_name == "coordination_correct":
-                        coord = result["details"]["coordination"]
+                        coord = result["details"].get("coordination", {})
                         if not coord.get("has_coordination", False):
-                            self.output_box.insert(tk.END, f"      No coordination charge found\n")
+                            self.output_box.insert(tk.END, 
+                                f"      → No coordination charge row found for this bill\n")
                         else:
                             self.output_box.insert(tk.END, 
-                                f"      Expected: {coord['expected']:.2f}, Actual: {coord['actual_coord']:.2f}, Diff: {coord['diff']:.2f}\n")
+                                f"      → Expected: {coord['expected']:.2f}, "
+                                f"Actual: {coord['actual_coord']:.2f}, "
+                                f"Difference: {coord['diff']:.2f}\n")
                             if coord.get("excluded_items"):
-                                self.output_box.insert(tk.END, f"      Excluded items:\n")
+                                self.output_box.insert(tk.END, f"      → Excluded from base amount:\n")
                                 for item in coord["excluded_items"]:
                                     self.output_box.insert(tk.END, 
-                                        f"        - {item['Item']} (Code: {item['Work code']}): {item['Cost']:.2f}\n")
-                    elif check_name == "allowed_values":
-                        violations = result["details"]["allowed_violations"]
-                        for col, vals in violations.items():
-                            self.output_box.insert(tk.END, f"      Invalid values in '{col}': {vals}\n")
-                    elif check_name == "numeric_values":
-                        violations = result["details"]["numeric_violations"]
-                        for col, vals in violations.items():
-                            self.output_box.insert(tk.END, f"      Non-numeric values in '{col}': {vals}\n")
-                    # columns_present is global, already handled at top
+                                        f"          - {item['Item']} (Code: {item['Work code']}): {item['Cost']:.2f}\n")
             self.output_box.insert(tk.END, "\n")
         
-        # Final summary
+        # Final summary – very clear
         self.output_box.insert(tk.END, "="*60 + "\n")
-        self.output_box.insert(tk.END, "FINAL SUMMARY\n")
+        self.output_box.insert(tk.END, "📊 FINAL SUMMARY\n")
         self.output_box.insert(tk.END, "="*60 + "\n")
         self.output_box.insert(tk.END, f"Total bills processed: {total_bills}\n")
-        self.output_box.insert(tk.END, f"✅ Bills passed all checks: {len(passed_bills)}")
         if passed_bills:
-            self.output_box.insert(tk.END, f" - {', '.join(str(b) for b in passed_bills)}\n")
+            self.output_box.insert(tk.END, 
+                f"✅ PASSED: {len(passed_bills)} bill{'s' if len(passed_bills)!=1 else ''} "
+                f"- {', '.join(str(b) for b in passed_bills)}\n")
         else:
-            self.output_box.insert(tk.END, "\n")
-        self.output_box.insert(tk.END, f"❌ Bills failed one or more checks: {len(failed_bills)}")
+            self.output_box.insert(tk.END, "✅ PASSED: 0 bills\n")
         if failed_bills:
-            self.output_box.insert(tk.END, f" - {', '.join(str(b) for b in failed_bills)}\n")
+            self.output_box.insert(tk.END, 
+                f"❌ FAILED: {len(failed_bills)} bill{'s' if len(failed_bills)!=1 else ''} "
+                f"- {', '.join(str(b) for b in failed_bills)}\n")
         else:
-            self.output_box.insert(tk.END, "\n")
+            self.output_box.insert(tk.END, "❌ FAILED: 0 bills\n")
         
-        # Summary line in the requested format
         self.output_box.insert(tk.END, f"\n{len(passed_bills)} out of {total_bills} bills passed.\n")
         
         self.progress_label.config(text="")
