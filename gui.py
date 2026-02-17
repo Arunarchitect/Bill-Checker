@@ -14,15 +14,19 @@ class BillValidationGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Bill Validation Tool")
-        self.root.geometry("950x850")
+        self.root.geometry("950x900")   # <-- fixed geometry
+        ...
 
+        # Default file names (expected to be in the same folder as the script)
         self.bill_file_path = tk.StringVar(value="Bill.csv")
-        self.exclude_file_path = tk.StringVar(value="exclude_patterns.csv")
-        self.allowed_file_path = tk.StringVar(value="")  # now mandatory
-        self.workcode_file_path = tk.StringVar(value="") # optional reference
+        self.exclude_file_path = tk.StringVar(value="Exclude.csv")
+        self.allowed_file_path = tk.StringVar(value="Valuecheck.csv")  # now mandatory
+        self.workcode_file_path = tk.StringVar(value="Workcode.csv")   # optional reference
         self.coordination_percent = tk.StringVar(value="15")
 
         self.setup_ui()
+        # Show instructions on startup
+        self.refresh_output()
 
     def setup_ui(self):
         # Title
@@ -103,8 +107,11 @@ class BillValidationGUI:
 
         # Output
         self.output_box = scrolledtext.ScrolledText(self.root, wrap=tk.WORD,
-                                                    width=110, height=28)
+                                                    width=110, height=30)
         self.output_box.pack(padx=10, pady=10, fill="both", expand=True)
+
+        # Configure tag for red text
+        self.output_box.tag_configure("red", foreground="red")
 
     def browse_bill_file(self):
         filename = filedialog.askopenfilename(
@@ -196,6 +203,43 @@ class BillValidationGUI:
                 self.output_box.insert(tk.END, f"   {col}: {desc}\n")
             self.output_box.insert(tk.END, "\n")
 
+        # --- Work code reference file issues (if any) ---
+        work_issues = validation_result.get('work_code_issues')
+        if work_issues:
+            # Insert header in red
+            self.output_box.insert(tk.END, "⚠️  WORK CODE REFERENCE FILE ISSUES\n", "red")
+            self.output_box.insert(tk.END, "-"*60 + "\n", "red")
+            details_red = ""
+
+            if work_issues.get('missing_code_rows'):
+                rows = ', '.join(str(r) for r in work_issues['missing_code_rows'])
+                details_red += f"   • Missing work code at row(s): {rows}\n"
+
+            if work_issues.get('missing_name_rows'):
+                rows = ', '.join(str(r) for r in work_issues['missing_name_rows'])
+                details_red += f"   • Missing work name at row(s): {rows}\n"
+
+            if work_issues.get('duplicate_codes'):
+                details_red += "   • Duplicate work codes:\n"
+                for code, rows in work_issues['duplicate_codes'].items():
+                    rows_str = ', '.join(str(r) for r in rows)
+                    details_red += f"       {code} at rows: {rows_str}\n"
+
+            if work_issues.get('duplicate_names'):
+                details_red += "   • Duplicate work names:\n"
+                for name, rows in work_issues['duplicate_names'].items():
+                    rows_str = ', '.join(str(r) for r in rows)
+                    details_red += f"       {name} at rows: {rows_str}\n"
+
+            if work_issues.get('duplicate_pairs'):
+                details_red += "   • Duplicate (Work code, Work) pairs:\n"
+                for pair_str, rows in work_issues['duplicate_pairs'].items():
+                    rows_str = ', '.join(str(r) for r in rows)
+                    details_red += f"       {pair_str} at rows: {rows_str}\n"
+
+            self.output_box.insert(tk.END, details_red, "red")
+            self.output_box.insert(tk.END, "\n")
+
         # Validation rules summary – plain language
         self.output_box.insert(tk.END, "📋 VALIDATION RULES\n")
         self.output_box.insert(tk.END, "-"*40 + "\n")
@@ -265,7 +309,7 @@ class BillValidationGUI:
                     display_name = check_names.get(check_name, check_name)
                     self.output_box.insert(tk.END, f"  {icon} {display_name}\n")
 
-            # Detailed explanations for failures
+            # Detailed explanations for failures – all in red
             failure_details = []
 
             # Missing values (from required columns)
@@ -324,7 +368,8 @@ class BillValidationGUI:
                             failure_details.append(f"      - {item['Item']} (Code: {item['Work code']}): ₹{item['Cost']:.2f}")
 
             if failure_details:
-                self.output_box.insert(tk.END, "\n" + "\n".join(failure_details) + "\n")
+                # Insert all failure details as one block with red tag
+                self.output_box.insert(tk.END, "\n" + "\n".join(failure_details) + "\n", "red")
 
             self.output_box.insert(tk.END, "\n")
 
@@ -411,8 +456,82 @@ class BillValidationGUI:
             messagebox.showerror("Error", f"Validation failed:\n{e}")
 
     def refresh_output(self):
+        """Clear the output and show detailed instructions."""
         self.output_box.delete(1.0, tk.END)
-        self.output_box.insert(tk.END, "🔄 Output cleared. Ready to run check again.\n")
+        instructions = """\
+📋 **WELCOME TO THE BILL VALIDATION TOOL**
+
+This tool checks your bill CSV file against a set of validation rules.  
+Follow the steps below to prepare your data and run the check.
+
+---
+
+## STEP 1: UNDERSTAND THE TEMPLATE FILES
+
+Four CSV files are used (default names are shown in the entry fields above).  
+**You must keep the column headings exactly as they appear in these templates.**  
+You can modify the data rows (copy/paste your own data) but **do not change the header row**.
+
+| File              | Purpose                                                                                   | Required Columns (examples)                          |
+|-------------------|-------------------------------------------------------------------------------------------|------------------------------------------------------|
+| `Bill.csv`        | The actual bill data you want to validate.                                                | Contract Bill No, Item, Work code, Work, Cost, ...   |
+| `Exclude.csv`     | Patterns to exclude from the coordination base amount.                                    | type, pattern   (e.g. type=Item, pattern=Supervisor) |
+| `Valuecheck.csv`  | Defines which values are allowed in each column (mandatory).                              | One column per required field (e.g. Contract Bill No)|
+| `Workcode.csv`    | Reference list of valid (Work code, Work) pairs (optional, but recommended).             | Work code, Work, Start, End                           |
+
+---
+
+## STEP 2: PREPARE YOUR DATA
+
+1. **Open each template file** in a spreadsheet editor (Excel, LibreOffice, etc.) or a text editor.
+2. **Keep the first row (headers) untouched**.
+3. **Paste your data starting from row 2**.  
+   - For `Bill.csv`, paste your bill rows.
+   - For `Exclude.csv`, add rows with `type` (either "Item" or "Work code") and the pattern to exclude.
+   - For `Valuecheck.csv`, list **all allowed values** for each column.  
+     * Use `any` if any non‑empty value is allowed.  
+     * Use `blank` if empty cells are allowed.  
+     * Otherwise, list every permissible value (one per row).
+   - For `Workcode.csv`, list all valid work‑code / work‑name pairs (optional).
+4. **Save the files** as CSV (comma‑separated values). Keep them in the same folder as this program, or use the Browse buttons to select them.
+
+---
+
+## STEP 3: SET THE COORDINATION PERCENTAGE
+
+Enter the percentage used for coordination charge (e.g., 15 for 15%).  
+The tool will check that the coordination charge row equals exactly this percentage of the base amount (after applying exclusions).
+
+---
+
+## STEP 4: RUN THE VALIDATION
+
+Click the **Run Check** button. The tool will:
+
+- Verify that all required columns exist.
+- Check for empty cells (unless `blank` is allowed).
+- Validate that values belong to the allowed lists.
+- Ensure numeric columns contain only numbers.
+- If a work‑code reference file is provided, verify every (Work code, Work) pair.
+- Calculate the expected coordination charge and compare it with the actual value.
+
+---
+
+## STEP 5: INTERPRET THE RESULTS
+
+- **Green checkmarks (✅)** indicate passed checks.
+- **Red crosses (❌)** indicate failures.
+- Detailed failure explanations are shown in **red text** below each bill.
+- A final summary shows how many bills passed/failed.
+
+If you need to run another check, click **Refresh** to clear the output and return to these instructions.
+
+---
+
+**Need help?** Make sure your CSV files use the correct column headers and that the data is properly formatted.  
+If you see unexpected errors, check the console for more details.
+"""
+        self.output_box.insert(tk.END, instructions)
         self.progress_label.config(text="")
 
 

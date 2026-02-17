@@ -34,6 +34,7 @@ class BillValidator:
         self.allowed_dict = {}          # column -> set of allowed values
         self.required_columns = []      # will be set from allowed_dict keys
         self.valid_work_pairs = set()   # set of (code, name) tuples from reference file
+        self.work_code_issues = None    # will hold dict of missing/duplicate info
 
     def load_exclude_patterns(self):
         """Load exclusion patterns from CSV (if provided)."""
@@ -91,9 +92,19 @@ class BillValidator:
             raise ValueError(f"Error loading allowed values: {e}")
 
     def load_work_codes(self):
-        """Load valid work code and work name pairs from reference CSV."""
+        """Load valid work code and work name pairs from reference CSV.
+           Also detect missing values, duplicate codes, duplicate names, and duplicate pairs."""
         if not self.work_code_path or not pd.io.common.file_exists(self.work_code_path):
             return
+
+        issues = {
+            'missing_code_rows': [],      # list of row numbers (1‑based) with empty work code
+            'missing_name_rows': [],      # list of row numbers with empty work name
+            'duplicate_codes': {},        # code -> list of row numbers (if >1 occurrence)
+            'duplicate_names': {},         # name -> list of row numbers (if >1 occurrence)
+            'duplicate_pairs': {}          # pair (code|name) -> list of row numbers
+        }
+
         try:
             wc_df = pd.read_csv(self.work_code_path, dtype=str)
             # Find columns named 'Work code' and 'Work' (case‑insensitive)
@@ -108,16 +119,66 @@ class BillValidator:
             if code_col is None or name_col is None:
                 raise ValueError("Work code file must contain columns named 'Work code' and 'Work'")
 
-            # Build set of (code, name) tuples, stripping spaces and dropping empty rows
-            pairs = set()
-            for _, row in wc_df.iterrows():
-                code = str(row[code_col]).strip() if pd.notna(row[code_col]) else ''
-                name = str(row[name_col]).strip() if pd.notna(row[name_col]) else ''
-                if code and name:   # only consider rows where both are non‑empty
-                    pairs.add((code, name))
-            self.valid_work_pairs = pairs
+            # Maps to collect occurrences
+            code_occurrences = defaultdict(list)
+            name_occurrences = defaultdict(list)
+            pair_occurrences = defaultdict(list)
+
+            valid_pairs = set()
+
+            for idx, row in wc_df.iterrows():
+                csv_row_num = idx + 2   # row number in the CSV (1‑based, header row = 1)
+
+                code_raw = row[code_col]
+                name_raw = row[name_col]
+
+                # Check missing work code
+                code_missing = pd.isna(code_raw) or str(code_raw).strip() == ''
+                if code_missing:
+                    issues['missing_code_rows'].append(csv_row_num)
+
+                # Check missing work name
+                name_missing = pd.isna(name_raw) or str(name_raw).strip() == ''
+                if name_missing:
+                    issues['missing_name_rows'].append(csv_row_num)
+
+                # If either is missing, skip further processing for this row
+                if code_missing or name_missing:
+                    continue
+
+                code = str(code_raw).strip()
+                name = str(name_raw).strip()
+                pair = (code, name)
+
+                # Record occurrences
+                code_occurrences[code].append(csv_row_num)
+                name_occurrences[name].append(csv_row_num)
+                pair_occurrences[pair].append(csv_row_num)
+                valid_pairs.add(pair)
+
+            # Filter to duplicates (more than one occurrence)
+            for code, rows in code_occurrences.items():
+                if len(rows) > 1:
+                    issues['duplicate_codes'][code] = rows
+            for name, rows in name_occurrences.items():
+                if len(rows) > 1:
+                    issues['duplicate_names'][name] = rows
+            for pair, rows in pair_occurrences.items():
+                if len(rows) > 1:
+                    pair_str = f"{pair[0]}|{pair[1]}"
+                    issues['duplicate_pairs'][pair_str] = rows
+
+            self.valid_work_pairs = valid_pairs
+            # Only store issues if any were found
+            if any(issues.values()):
+                self.work_code_issues = issues
+            else:
+                self.work_code_issues = None
+
         except Exception as e:
             raise ValueError(f"Error loading work codes: {e}")
+
+
 
     def _check_columns_present(self, df_columns):
         """Check that all required columns (from allowed_dict) are present."""
@@ -334,7 +395,7 @@ class BillValidator:
         # 1. Load exclude patterns and allowed values
         self.load_exclude_patterns()
         self.load_allowed_values()
-        # 2. Load work codes if provided
+        # 2. Load work codes if provided (now includes issue detection)
         self.load_work_codes()
 
         # 3. Load main bill CSV
@@ -353,6 +414,7 @@ class BillValidator:
                 'exclude_workcode_patterns': self.exclude_workcode_patterns,
                 'allowed_dict': self.allowed_dict,
                 'work_pairs_checked': bool(self.valid_work_pairs),
+                'work_code_issues': self.work_code_issues,  # include issues
                 'total_bills': 0,
                 'results': {}
             }
@@ -415,6 +477,7 @@ class BillValidator:
             'exclude_workcode_patterns': self.exclude_workcode_patterns,
             'allowed_dict': self.allowed_dict,
             'work_pairs_checked': bool(self.valid_work_pairs),
+            'work_code_issues': self.work_code_issues,   # include issues
             'total_bills': total_bills,
             'results': results,
             'tolerance': self.tolerance
