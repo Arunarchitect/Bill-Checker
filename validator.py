@@ -29,12 +29,12 @@ class BillValidator:
 
         # Will be populated after loading
         self.df = None
-        self.exclude_item_patterns = []
-        self.exclude_workcode_patterns = []
-        self.allowed_dict = {}          # column -> set of allowed values
-        self.required_columns = []      # will be set from allowed_dict keys
-        self.valid_work_pairs = set()   # set of (code, name) tuples from reference file
-        self.work_code_issues = None    # will hold dict of missing/duplicate info
+        self.exclude_item_patterns = []      # still kept for compatibility
+        self.exclude_workcode_patterns = []  # used for simple work‑code exclusions
+        self.allowed_dict = {}                # column -> set of allowed values
+        self.required_columns = []            # will be set from allowed_dict keys
+        self.valid_work_pairs = set()         # set of (code, name) tuples from reference file
+        self.work_code_issues = None          # will hold dict of missing/duplicate info
 
     def load_exclude_patterns(self):
         """Load exclusion patterns from CSV (if provided)."""
@@ -43,16 +43,28 @@ class BillValidator:
 
         try:
             excl_df = pd.read_csv(self.exclude_path)
-            # Expect columns: 'type' and 'pattern' (type can be 'Item' or 'Work code')
+
+            # --- Case 1: Single column → treat as work code exclusions (exact match) ---
+            if len(excl_df.columns) == 1:
+                # The column might have a header; we ignore the header and take all non‑empty values
+                col = excl_df.columns[0]
+                values = excl_df[col].dropna().astype(str).str.strip()
+                values = values[values != '']
+                self.exclude_workcode_patterns = values.tolist()
+                return
+
+            # --- Case 2: Two columns with headers 'type' and 'pattern' ---
             if 'type' in excl_df.columns and 'pattern' in excl_df.columns:
                 for _, row in excl_df.iterrows():
                     if row['type'].strip().lower() == 'item':
                         self.exclude_item_patterns.append(row['pattern'].strip())
                     elif row['type'].strip().lower() == 'work code':
                         self.exclude_workcode_patterns.append(row['pattern'].strip())
-            else:
-                # Fallback: assume one column with item patterns (for backward compatibility)
-                self.exclude_item_patterns = excl_df.iloc[:, 0].dropna().astype(str).tolist()
+                return
+
+            # --- Fallback: assume first column contains item patterns (backward compatibility) ---
+            self.exclude_item_patterns = excl_df.iloc[:, 0].dropna().astype(str).tolist()
+
         except Exception as e:
             print(f"Warning: Could not load exclude patterns: {e}")
 
@@ -178,8 +190,6 @@ class BillValidator:
         except Exception as e:
             raise ValueError(f"Error loading work codes: {e}")
 
-
-
     def _check_columns_present(self, df_columns):
         """Check that all required columns (from allowed_dict) are present."""
         missing = [col for col in self.required_columns if col not in df_columns]
@@ -257,13 +267,12 @@ class BillValidator:
     def _check_coordination(self, bill_df):
         """
         Check coordination charge correctness.
+        Coordination rows are those where Work code is exactly 'C'.
+        Exclusions are based on exact match of work codes (if provided).
         Returns (passed, details_dict).
         """
-        # Identify coordination charge row(s)
-        coord_mask = (
-            bill_df['Work'].astype(str).str.contains('coordination', case=False, na=False) |
-            bill_df['Work code'].astype(str).str.startswith('C')
-        )
+        # Identify coordination charge row(s) – exact match on Work code == 'C'
+        coord_mask = bill_df['Work code'].astype(str).str.strip() == 'C'
         coord_rows = bill_df[coord_mask]
 
         details = {
@@ -275,26 +284,30 @@ class BillValidator:
         }
 
         if coord_rows.empty:
-            # No coordination row – treat as pass but with warning flag
-            return True, details   # ← changed from False to True
+            # No coordination row – treat as pass
+            return True, details
 
         actual_coord = coord_rows['Cost'].sum()
         details['actual_coord'] = actual_coord
 
-        # Build base amount by excluding patterns
+        # Build base amount by excluding patterns – exact match only
         base_mask = pd.Series([True] * len(bill_df), index=bill_df.index)
 
+        # Exclude by item patterns (if any) – exact match
         for pattern in self.exclude_item_patterns:
-            base_mask &= ~bill_df['Item'].astype(str).str.contains(pattern, case=False, na=False)
+            base_mask &= ~(bill_df['Item'].astype(str).str.strip() == pattern)
 
+        # Exclude by work code patterns (if any) – exact match
         for pattern in self.exclude_workcode_patterns:
-            base_mask &= ~bill_df['Work code'].astype(str).str.contains(pattern, case=False, na=False)
+            base_mask &= ~(bill_df['Work code'].astype(str).str.strip() == pattern)
 
+        # Remove coordination rows themselves from base
         base_mask &= ~coord_mask
 
         base_df = bill_df[base_mask]
         base_sum = base_df['Cost'].sum()
 
+        # Record excluded items (for reporting)
         excluded = bill_df[~base_mask & ~coord_mask]
         for _, row in excluded.iterrows():
             details['excluded_items'].append({
@@ -318,29 +331,16 @@ class BillValidator:
           - 'Work code' and 'Work' columns exist.
           - No missing values in these columns.
           - Every (work code, work name) pair is valid according to reference file.
-        Returns (passed, details_dict) where details contains:
-          - missing_code: list of rows where work code is empty
-          - missing_name: list of rows where work name is empty
-          - invalid_pairs: dict mapping "code|name" to list of rows
+        Returns (passed, details_dict).
         """
-        if not self.valid_work_pairs:
-            # No reference loaded – skip check (but still check missing values? The user wants to check missing even without reference?)
-            # We'll assume if no reference, we only check missing values? The user said "check for missing values in work cod and work" even if not using in value check file.
-            # So we should still check missing values, but we don't have a reference to validate pairs.
-            # To keep it simple, we'll only run the missing‑value part.
-            # But the user likely provides a reference when they want the pair check.
-            # We'll do: if no valid_work_pairs, we only report missing values and treat pairs as not checked.
-            pass
-
         details = {
             'missing_code': [],
             'missing_name': [],
-            'invalid_pairs': defaultdict(list)   # key "code|name" -> rows
+            'invalid_pairs': defaultdict(list)
         }
 
         # Check that required columns exist in the bill
         if 'Work code' not in bill_df.columns or 'Work' not in bill_df.columns:
-            # If columns missing, treat as failure and return
             missing_cols = []
             if 'Work code' not in bill_df.columns:
                 missing_cols.append('Work code')
@@ -355,7 +355,7 @@ class BillValidator:
             # Check for missing work code
             if pd.isna(code) or str(code).strip() == '':
                 details['missing_code'].append(idx + 2)
-                continue   # skip further checks for this row
+                continue
 
             # Check for missing work name
             if pd.isna(name) or str(name).strip() == '':
@@ -370,18 +370,13 @@ class BillValidator:
                     key = f"{code_str}|{name_str}"
                     details['invalid_pairs'][key].append(idx + 2)
 
-        # Convert defaultdict to plain dict for output
         details['invalid_pairs'] = dict(details['invalid_pairs'])
 
-        # Determine pass status:
-        # - If reference provided, must have no missing and no invalid pairs.
-        # - If no reference, must have no missing (since we can't validate pairs, we ignore invalid pairs).
         if self.valid_work_pairs:
             passed = (len(details['missing_code']) == 0 and
                       len(details['missing_name']) == 0 and
                       len(details['invalid_pairs']) == 0)
         else:
-            # Only missing values are relevant
             passed = (len(details['missing_code']) == 0 and
                       len(details['missing_name']) == 0)
 
@@ -395,7 +390,7 @@ class BillValidator:
         # 1. Load exclude patterns and allowed values
         self.load_exclude_patterns()
         self.load_allowed_values()
-        # 2. Load work codes if provided (now includes issue detection)
+        # 2. Load work codes if provided
         self.load_work_codes()
 
         # 3. Load main bill CSV
@@ -414,7 +409,7 @@ class BillValidator:
                 'exclude_workcode_patterns': self.exclude_workcode_patterns,
                 'allowed_dict': self.allowed_dict,
                 'work_pairs_checked': bool(self.valid_work_pairs),
-                'work_code_issues': self.work_code_issues,  # include issues
+                'work_code_issues': self.work_code_issues,
                 'total_bills': 0,
                 'results': {}
             }
@@ -429,40 +424,32 @@ class BillValidator:
                 progress_callback(idx, total_bills, bill)
 
             bill_df = self.df[self.df['Contract Bill No'] == bill].copy()
-
-            # Ensure Cost is numeric for calculations
             bill_df['Cost'] = pd.to_numeric(bill_df['Cost'], errors='coerce')
 
             checks = {}
             details = {}
 
-            # Columns present (already global, but we can record per bill as True)
-            checks['columns_present'] = True   # because global check passed
+            checks['columns_present'] = True
 
-            # No missing values (from required columns only)
             nmv_ok, nmv_details = self._check_no_missing_values(bill_df)
             checks['no_missing_values'] = nmv_ok
             details['missing_values'] = nmv_details
 
-            # Coordination correct
             coord_ok, coord_details = self._check_coordination(bill_df)
             checks['coordination_correct'] = coord_ok
             details['coordination'] = coord_details
 
-            # Allowed values
             av_ok, av_details = self._check_allowed_values(bill_df)
             checks['allowed_values'] = av_ok
             details['allowed_violations'] = av_details
 
-            # Numeric values
             num_ok, num_details = self._check_numeric_values(bill_df)
             checks['numeric_values'] = num_ok
             details['numeric_violations'] = num_details
 
-            # Work code and name validation (includes missing checks)
             wc_ok, wc_details = self._check_work_code_name_pairs(bill_df)
             checks['work_pairs_valid'] = wc_ok
-            details['work_pairs_checked'] = bool(self.valid_work_pairs)   # flag for display
+            details['work_pairs_checked'] = bool(self.valid_work_pairs)
             details['work_pair_violations'] = wc_details
 
             results[bill] = {
@@ -477,7 +464,7 @@ class BillValidator:
             'exclude_workcode_patterns': self.exclude_workcode_patterns,
             'allowed_dict': self.allowed_dict,
             'work_pairs_checked': bool(self.valid_work_pairs),
-            'work_code_issues': self.work_code_issues,   # include issues
+            'work_code_issues': self.work_code_issues,
             'total_bills': total_bills,
             'results': results,
             'tolerance': self.tolerance

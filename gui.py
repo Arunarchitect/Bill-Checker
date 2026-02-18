@@ -14,18 +14,16 @@ class BillValidationGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Bill Validation Tool")
-        self.root.geometry("950x900")   # <-- fixed geometry
-        ...
+        self.root.geometry("950x900")
 
         # Default file names (expected to be in the same folder as the script)
         self.bill_file_path = tk.StringVar(value="Bill.csv")
         self.exclude_file_path = tk.StringVar(value="Exclude.csv")
-        self.allowed_file_path = tk.StringVar(value="Valuecheck.csv")  # now mandatory
-        self.workcode_file_path = tk.StringVar(value="Workcode.csv")   # optional reference
+        self.allowed_file_path = tk.StringVar(value="Valuecheck.csv")
+        self.workcode_file_path = tk.StringVar(value="Workcode.csv")
         self.coordination_percent = tk.StringVar(value="15")
 
         self.setup_ui()
-        # Show instructions on startup
         self.refresh_output()
 
     def setup_ui(self):
@@ -110,8 +108,10 @@ class BillValidationGUI:
                                                     width=110, height=30)
         self.output_box.pack(padx=10, pady=10, fill="both", expand=True)
 
-        # Configure tag for red text
+        # Configure tags
         self.output_box.tag_configure("red", foreground="red")
+        self.output_box.tag_configure("orange", foreground="darkorange")
+        self.output_box.tag_configure("warning", foreground="darkorange")
 
     def browse_bill_file(self):
         filename = filedialog.askopenfilename(
@@ -155,14 +155,13 @@ class BillValidationGUI:
         """Format validation results with check icons and detailed failure explanations."""
         self.output_box.delete(1.0, tk.END)
 
-        # Global column check
         if not validation_result["global_columns_ok"]:
             self.output_box.insert(tk.END,
                 "❌ MISSING COLUMNS\n" +
                 "="*60 + "\n" +
                 f"The following required columns are missing from the bill file:\n" +
                 f"   {', '.join(validation_result['missing_columns'])}\n\n")
-            return  # can't proceed if columns missing
+            return
 
         self.output_box.insert(tk.END,
             "✅ COLUMN CHECK PASSED\n" +
@@ -187,13 +186,11 @@ class BillValidationGUI:
             self.output_box.insert(tk.END, "📋 ALLOWED VALUES PER COLUMN\n")
             self.output_box.insert(tk.END, "-"*40 + "\n")
             for col, values in sorted(allowed_dict.items()):
-                # Format nicely: show 'any' or 'blank' prominently
                 if 'any' in values and len(values) == 1:
                     desc = "any value allowed"
                 elif 'blank' in values and len(values) == 1:
                     desc = "empty cells allowed"
                 else:
-                    # Remove 'any' and 'blank' from display if they exist alongside other values
                     display_vals = [v for v in values if v not in ('any','blank')]
                     desc = f"must be one of: {', '.join(sorted(display_vals))}"
                     if 'blank' in values:
@@ -203,44 +200,37 @@ class BillValidationGUI:
                 self.output_box.insert(tk.END, f"   {col}: {desc}\n")
             self.output_box.insert(tk.END, "\n")
 
-        # --- Work code reference file issues (if any) ---
+        # Work code reference file issues
         work_issues = validation_result.get('work_code_issues')
         if work_issues:
-            # Insert header in red
             self.output_box.insert(tk.END, "⚠️  WORK CODE REFERENCE FILE ISSUES\n", "red")
             self.output_box.insert(tk.END, "-"*60 + "\n", "red")
             details_red = ""
-
             if work_issues.get('missing_code_rows'):
                 rows = ', '.join(str(r) for r in work_issues['missing_code_rows'])
                 details_red += f"   • Missing work code at row(s): {rows}\n"
-
             if work_issues.get('missing_name_rows'):
                 rows = ', '.join(str(r) for r in work_issues['missing_name_rows'])
                 details_red += f"   • Missing work name at row(s): {rows}\n"
-
             if work_issues.get('duplicate_codes'):
                 details_red += "   • Duplicate work codes:\n"
                 for code, rows in work_issues['duplicate_codes'].items():
                     rows_str = ', '.join(str(r) for r in rows)
                     details_red += f"       {code} at rows: {rows_str}\n"
-
             if work_issues.get('duplicate_names'):
                 details_red += "   • Duplicate work names:\n"
                 for name, rows in work_issues['duplicate_names'].items():
                     rows_str = ', '.join(str(r) for r in rows)
                     details_red += f"       {name} at rows: {rows_str}\n"
-
             if work_issues.get('duplicate_pairs'):
                 details_red += "   • Duplicate (Work code, Work) pairs:\n"
                 for pair_str, rows in work_issues['duplicate_pairs'].items():
                     rows_str = ', '.join(str(r) for r in rows)
                     details_red += f"       {pair_str} at rows: {rows_str}\n"
-
             self.output_box.insert(tk.END, details_red, "red")
             self.output_box.insert(tk.END, "\n")
 
-        # Validation rules summary – plain language
+        # Validation rules summary
         self.output_box.insert(tk.END, "📋 VALIDATION RULES\n")
         self.output_box.insert(tk.END, "-"*40 + "\n")
         rules = [
@@ -266,53 +256,73 @@ class BillValidationGUI:
         passed_bills = []
         failed_bills = []
 
-        # Human‑readable check names
-        check_names = {
+        # Human‑readable base names
+        base_check_names = {
             'columns_present': 'Required columns exist',
             'no_missing_values': 'No empty cells in required columns',
             'allowed_values': 'Values from allowed list',
             'numeric_values': 'Numeric columns contain only numbers',
             'work_pairs_valid': 'Work code/name pairs are valid',
-            'coordination_correct': 'Coordination charge correct'
         }
 
-        # Process each bill
         for bill, result in validation_result["results"].items():
             checks = result["checks"]
-            bill_passed = all(checks.values())
             details = result["details"]
+            coord_info = details.get("coordination", {})
 
-            if bill_passed:
+            # Determine bill pass/fail (coordination check always passes if no coordination row)
+            all_checks_pass = all(checks.values())  # coordination_correct is True when no coordination
+
+            if all_checks_pass:
                 passed_bills.append(bill)
             else:
                 failed_bills.append(bill)
 
-            # Bill header with clear pass/fail icon
-            status = "✅ PASS" if bill_passed else "❌ FAIL"
+            status = "✅ PASS" if all_checks_pass else "❌ FAIL"
             self.output_box.insert(tk.END, f"{status}  Bill {bill}\n")
             self.output_box.insert(tk.END, "  " + "-"*50 + "\n")
 
-            # Table of checks with icons
-            check_order = ['columns_present', 'no_missing_values', 'allowed_values',
-                           'numeric_values', 'work_pairs_valid', 'coordination_correct']
-            for check_name in check_order:
-                # Skip work_pairs_valid if not checked (but we always check missing values)
-                if check_name == 'work_pairs_valid' and not validation_result.get('work_pairs_checked', False):
-                    # Still need to show missing value status if any
-                    passed = checks.get(check_name, False)
-                    icon = "✅" if passed else "❌"
-                    display_name = "Work code/name (missing values only)"
-                    self.output_box.insert(tk.END, f"  {icon} {display_name}\n")
-                else:
-                    passed = checks.get(check_name, False)
-                    icon = "✅" if passed else "❌"
-                    display_name = check_names.get(check_name, check_name)
-                    self.output_box.insert(tk.END, f"  {icon} {display_name}\n")
+            # ---- List all checks with appropriate symbols and text ----
+            # Columns present
+            icon = "✅" if checks.get('columns_present') else "❌"
+            self.output_box.insert(tk.END, f"  {icon} {base_check_names['columns_present']}\n")
 
-            # Detailed explanations for failures – all in red
+            # No missing values
+            icon = "✅" if checks.get('no_missing_values') else "❌"
+            self.output_box.insert(tk.END, f"  {icon} {base_check_names['no_missing_values']}\n")
+
+            # Allowed values
+            icon = "✅" if checks.get('allowed_values') else "❌"
+            self.output_box.insert(tk.END, f"  {icon} {base_check_names['allowed_values']}\n")
+
+            # Numeric values
+            icon = "✅" if checks.get('numeric_values') else "❌"
+            self.output_box.insert(tk.END, f"  {icon} {base_check_names['numeric_values']}\n")
+
+            # Work pairs valid (or missing values only)
+            if validation_result.get('work_pairs_checked', False):
+                icon = "✅" if checks.get('work_pairs_valid') else "❌"
+                self.output_box.insert(tk.END, f"  {icon} {base_check_names['work_pairs_valid']}\n")
+            else:
+                # No reference file: only check missing values, which is included in work_pairs_valid check
+                icon = "✅" if checks.get('work_pairs_valid') else "❌"
+                self.output_box.insert(tk.END, f"  {icon} Work code/name (missing values only)\n")
+
+            # Coordination charge – special handling
+            if coord_info.get('has_coordination', False):
+                # There is a coordination row: show correct/incorrect
+                passed = checks.get('coordination_correct', False)
+                icon = "✅" if passed else "❌"
+                text = "Coordination charge correct" if passed else "Coordination charge incorrect"
+                self.output_box.insert(tk.END, f"  {icon} {text}\n")
+            else:
+                # No coordination row: show warning and pass
+                self.output_box.insert(tk.END, "  ⚠️  No coordination charge (skipped)\n", "orange")
+
+            # ---- Detailed failure explanations ----
             failure_details = []
 
-            # Missing values (from required columns)
+            # Missing values
             missing = details.get("missing_values", {})
             if missing:
                 for col, rows in missing.items():
@@ -343,7 +353,6 @@ class BillValidationGUI:
                     missing_code = work_violations.get('missing_code', [])
                     missing_name = work_violations.get('missing_name', [])
                     invalid_pairs = work_violations.get('invalid_pairs', {})
-
                     if missing_code:
                         rows_str = ', '.join(str(r) for r in missing_code)
                         failure_details.append(f"  • Missing work code at row(s): {rows_str}")
@@ -355,20 +364,15 @@ class BillValidationGUI:
                         rows_str = ', '.join(str(r) for r in rows)
                         failure_details.append(f"  • Invalid pair (code: '{code}', work: '{name}') at row(s): {rows_str}")
 
-            # Coordination issues
-            coord = details.get("coordination", {})
-            if not checks.get('coordination_correct', True):
-                if not coord.get("has_coordination", False):
-                    failure_details.append(f"  • No coordination charge row found.")
-                else:
-                    failure_details.append(f"  • Expected: ₹{coord['expected']:.2f}, Actual: ₹{coord['actual_coord']:.2f}, Difference: ₹{coord['diff']:.2f}")
-                    if coord.get("excluded_items"):
-                        failure_details.append(f"  • Excluded from base amount:")
-                        for item in coord["excluded_items"]:
-                            failure_details.append(f"      - {item['Item']} (Code: {item['Work code']}): ₹{item['Cost']:.2f}")
+            # Coordination issues (only if coordination exists and failed)
+            if coord_info.get('has_coordination', False) and not checks.get('coordination_correct', True):
+                failure_details.append(f"  • Expected: ₹{coord_info['expected']:.2f}, Actual: ₹{coord_info['actual_coord']:.2f}, Difference: ₹{coord_info['diff']:.2f}")
+                if coord_info.get("excluded_items"):
+                    failure_details.append(f"  • Excluded from base amount:")
+                    for item in coord_info["excluded_items"]:
+                        failure_details.append(f"      - {item['Item']} (Code: {item['Work code']}): ₹{item['Cost']:.2f}")
 
             if failure_details:
-                # Insert all failure details as one block with red tag
                 self.output_box.insert(tk.END, "\n" + "\n".join(failure_details) + "\n", "red")
 
             self.output_box.insert(tk.END, "\n")
@@ -392,7 +396,6 @@ class BillValidationGUI:
             self.output_box.insert(tk.END, "❌ FAILED: 0 bills\n")
 
         self.output_box.insert(tk.END, f"\n{len(passed_bills)} out of {total_bills} bills passed.\n")
-
         self.progress_label.config(text="")
 
     def run_check(self):
@@ -402,7 +405,6 @@ class BillValidationGUI:
         workcode_path = self.workcode_file_path.get().strip()
         percent_str = self.coordination_percent.get().strip()
 
-        # Validate percentage
         try:
             percent = float(percent_str)
             if percent <= 0:
@@ -412,7 +414,6 @@ class BillValidationGUI:
                                  "Please enter a valid positive number for the coordination percentage.")
             return
 
-        # Validate bill file
         if not bill_path:
             messagebox.showerror("Error", "Please select a Bill CSV file.")
             return
@@ -420,13 +421,11 @@ class BillValidationGUI:
             messagebox.showerror("Error", f"Bill file not found:\n{bill_path}")
             return
 
-        # Validate exclude patterns file (optional but warn if missing)
         if exclude_path and not os.path.exists(exclude_path):
             if not messagebox.askyesno("File Not Found",
                 f"Exclude patterns file not found:\n{exclude_path}\n\nContinue without exclusion patterns?"):
                 return
 
-        # Validate allowed values file (mandatory)
         if not allowed_path:
             messagebox.showerror("Error", "Please select an Allowed Values CSV file (mandatory).")
             return
@@ -434,13 +433,12 @@ class BillValidationGUI:
             messagebox.showerror("Error", f"Allowed values file not found:\n{allowed_path}")
             return
 
-        # Validate work code reference file if provided
         if workcode_path and not os.path.exists(workcode_path):
             if not messagebox.askyesno("File Not Found",
                 f"Work code reference file not found:\n{workcode_path}\n\nContinue without work code validation?"):
                 return
             else:
-                workcode_path = None   # treat as not provided
+                workcode_path = None
 
         try:
             validator = BillValidator(
@@ -456,7 +454,6 @@ class BillValidationGUI:
             messagebox.showerror("Error", f"Validation failed:\n{e}")
 
     def refresh_output(self):
-        """Clear the output and show detailed instructions."""
         self.output_box.delete(1.0, tk.END)
         instructions = """\
 📋 **WELCOME TO THE BILL VALIDATION TOOL**
@@ -475,7 +472,7 @@ You can modify the data rows (copy/paste your own data) but **do not change the 
 | File              | Purpose                                                                                   | Required Columns (examples)                          |
 |-------------------|-------------------------------------------------------------------------------------------|------------------------------------------------------|
 | `Bill.csv`        | The actual bill data you want to validate.                                                | Contract Bill No, Item, Work code, Work, Cost, ...   |
-| `Exclude.csv`     | Patterns to exclude from the coordination base amount.                                    | type, pattern   (e.g. type=Item, pattern=Supervisor) |
+| `Exclude.csv`     | Patterns to exclude from the coordination base amount.                                    | Single column: list of work codes (e.g., S, C)       |
 | `Valuecheck.csv`  | Defines which values are allowed in each column (mandatory).                              | One column per required field (e.g. Contract Bill No)|
 | `Workcode.csv`    | Reference list of valid (Work code, Work) pairs (optional, but recommended).             | Work code, Work, Start, End                           |
 
@@ -487,7 +484,7 @@ You can modify the data rows (copy/paste your own data) but **do not change the 
 2. **Keep the first row (headers) untouched**.
 3. **Paste your data starting from row 2**.  
    - For `Bill.csv`, paste your bill rows.
-   - For `Exclude.csv`, add rows with `type` (either "Item" or "Work code") and the pattern to exclude.
+   - For `Exclude.csv`, list the work codes you want to exclude (one per row).
    - For `Valuecheck.csv`, list **all allowed values** for each column.  
      * Use `any` if any non‑empty value is allowed.  
      * Use `blank` if empty cells are allowed.  
@@ -521,6 +518,7 @@ Click the **Run Check** button. The tool will:
 
 - **Green checkmarks (✅)** indicate passed checks.
 - **Red crosses (❌)** indicate failures.
+- **Orange warning (⚠️)** indicates that a check was skipped (e.g., no coordination charge).
 - Detailed failure explanations are shown in **red text** below each bill.
 - A final summary shows how many bills passed/failed.
 
