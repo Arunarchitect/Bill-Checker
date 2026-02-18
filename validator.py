@@ -29,44 +29,38 @@ class BillValidator:
 
         # Will be populated after loading
         self.df = None
-        self.exclude_item_patterns = []      # still kept for compatibility
-        self.exclude_workcode_patterns = []  # used for simple work‑code exclusions
-        self.allowed_dict = {}                # column -> set of allowed values
-        self.required_columns = []            # will be set from allowed_dict keys
-        self.valid_work_pairs = set()         # set of (code, name) tuples from reference file
-        self.work_code_issues = None          # will hold dict of missing/duplicate info
+        self.exclude_conditions = []          # list of dicts {column: value, ...}
+        self.allowed_dict = {}                 # column -> set of allowed values
+        self.required_columns = []              # will be set from allowed_dict keys
+        self.valid_work_pairs = set()           # set of (code, name) tuples from reference file
+        self.work_code_issues = None            # will hold dict of missing/duplicate info
 
     def load_exclude_patterns(self):
-        """Load exclusion patterns from CSV (if provided)."""
+        """Load exclusion conditions from CSV (if provided).
+           Each row in the CSV defines a set of column-value pairs.
+           A bill row must match all specified columns to be excluded.
+        """
         if not self.exclude_path or not pd.io.common.file_exists(self.exclude_path):
             return
 
         try:
-            excl_df = pd.read_csv(self.exclude_path)
-
-            # --- Case 1: Single column → treat as work code exclusions (exact match) ---
-            if len(excl_df.columns) == 1:
-                # The column might have a header; we ignore the header and take all non‑empty values
-                col = excl_df.columns[0]
-                values = excl_df[col].dropna().astype(str).str.strip()
-                values = values[values != '']
-                self.exclude_workcode_patterns = values.tolist()
-                return
-
-            # --- Case 2: Two columns with headers 'type' and 'pattern' ---
-            if 'type' in excl_df.columns and 'pattern' in excl_df.columns:
-                for _, row in excl_df.iterrows():
-                    if row['type'].strip().lower() == 'item':
-                        self.exclude_item_patterns.append(row['pattern'].strip())
-                    elif row['type'].strip().lower() == 'work code':
-                        self.exclude_workcode_patterns.append(row['pattern'].strip())
-                return
-
-            # --- Fallback: assume first column contains item patterns (backward compatibility) ---
-            self.exclude_item_patterns = excl_df.iloc[:, 0].dropna().astype(str).tolist()
-
+            excl_df = pd.read_csv(self.exclude_path, dtype=str)  # read all as strings
+            # Drop completely empty rows (all NaN)
+            excl_df = excl_df.dropna(how='all')
+            conditions = []
+            for _, row in excl_df.iterrows():
+                condition = {}
+                for col in excl_df.columns:
+                    val = row[col]
+                    if pd.isna(val) or str(val).strip() == '':
+                        continue
+                    condition[col] = str(val).strip()
+                if condition:  # only add if at least one condition
+                    conditions.append(condition)
+            self.exclude_conditions = conditions
         except Exception as e:
             print(f"Warning: Could not load exclude patterns: {e}")
+            self.exclude_conditions = []
 
     def load_allowed_values(self):
         """
@@ -268,7 +262,7 @@ class BillValidator:
         """
         Check coordination charge correctness.
         Coordination rows are those where Work code is exactly 'C'.
-        Exclusions are based on exact match of work codes (if provided).
+        Exclusions are based on conditions loaded from exclude CSV.
         Returns (passed, details_dict).
         """
         # Identify coordination charge row(s) – exact match on Work code == 'C'
@@ -277,6 +271,7 @@ class BillValidator:
 
         details = {
             'has_coordination': not coord_rows.empty,
+            'base_amount': 0.0,
             'expected': 0.0,
             'actual_coord': 0.0,
             'diff': 0.0,
@@ -290,25 +285,39 @@ class BillValidator:
         actual_coord = coord_rows['Cost'].sum()
         details['actual_coord'] = actual_coord
 
-        # Build base amount by excluding patterns – exact match only
-        base_mask = pd.Series([True] * len(bill_df), index=bill_df.index)
+        # Build exclusion mask based on all conditions
+        exclude_mask = pd.Series([False] * len(bill_df), index=bill_df.index)
 
-        # Exclude by item patterns (if any) – exact match
-        for pattern in self.exclude_item_patterns:
-            base_mask &= ~(bill_df['Item'].astype(str).str.strip() == pattern)
+        for condition in self.exclude_conditions:
+            # Only consider this condition if all its columns exist in the bill
+            if not all(col in bill_df.columns for col in condition.keys()):
+                continue
 
-        # Exclude by work code patterns (if any) – exact match
-        for pattern in self.exclude_workcode_patterns:
-            base_mask &= ~(bill_df['Work code'].astype(str).str.strip() == pattern)
+            # Start with all rows True, then AND each column condition using robust comparison
+            cond_mask = pd.Series([True] * len(bill_df), index=bill_df.index)
+            for col, val in condition.items():
+                # Define a matching function that tries numeric comparison first
+                def match_func(x):
+                    if pd.isna(x):
+                        return False
+                    # Try numeric comparison
+                    try:
+                        # Convert both to float and compare within tolerance
+                        return abs(float(x) - float(val)) < 1e-9
+                    except ValueError:
+                        # Fall back to string comparison
+                        return str(x).strip() == val
+                cond_mask &= bill_df[col].apply(match_func)
+            exclude_mask |= cond_mask
 
         # Remove coordination rows themselves from base
-        base_mask &= ~coord_mask
-
+        base_mask = ~exclude_mask & ~coord_mask
         base_df = bill_df[base_mask]
         base_sum = base_df['Cost'].sum()
+        details['base_amount'] = base_sum
 
         # Record excluded items (for reporting)
-        excluded = bill_df[~base_mask & ~coord_mask]
+        excluded = bill_df[exclude_mask & ~coord_mask]
         for _, row in excluded.iterrows():
             details['excluded_items'].append({
                 'Item': row['Item'],
@@ -405,8 +414,7 @@ class BillValidator:
             return {
                 'global_columns_ok': False,
                 'missing_columns': missing_cols,
-                'exclude_item_patterns': self.exclude_item_patterns,
-                'exclude_workcode_patterns': self.exclude_workcode_patterns,
+                'exclude_conditions': self.exclude_conditions,
                 'allowed_dict': self.allowed_dict,
                 'work_pairs_checked': bool(self.valid_work_pairs),
                 'work_code_issues': self.work_code_issues,
@@ -460,8 +468,7 @@ class BillValidator:
         return {
             'global_columns_ok': True,
             'missing_columns': [],
-            'exclude_item_patterns': self.exclude_item_patterns,
-            'exclude_workcode_patterns': self.exclude_workcode_patterns,
+            'exclude_conditions': self.exclude_conditions,
             'allowed_dict': self.allowed_dict,
             'work_pairs_checked': bool(self.valid_work_pairs),
             'work_code_issues': self.work_code_issues,

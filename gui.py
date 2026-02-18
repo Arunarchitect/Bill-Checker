@@ -168,16 +168,14 @@ class BillValidationGUI:
             "="*60 + "\n" +
             "All required columns are present in the bill file.\n\n")
 
-        # Exclusion patterns
-        exclude_item = validation_result["exclude_item_patterns"]
-        exclude_work = validation_result["exclude_workcode_patterns"]
-        if exclude_item or exclude_work:
-            self.output_box.insert(tk.END, "📋 EXCLUSION PATTERNS\n")
+        # Exclusion conditions
+        exclude_conds = validation_result.get("exclude_conditions", [])
+        if exclude_conds:
+            self.output_box.insert(tk.END, "📋 EXCLUSION CONDITIONS\n")
             self.output_box.insert(tk.END, "-"*40 + "\n")
-            if exclude_item:
-                self.output_box.insert(tk.END, f"   Items excluded from base amount: {', '.join(exclude_item)}\n")
-            if exclude_work:
-                self.output_box.insert(tk.END, f"   Work codes excluded: {', '.join(exclude_work)}\n")
+            for cond in exclude_conds:
+                cond_str = " AND ".join(f"{col} = '{val}'" for col, val in cond.items())
+                self.output_box.insert(tk.END, f"   • {cond_str}\n")
             self.output_box.insert(tk.END, "\n")
 
         # Allowed values
@@ -319,7 +317,24 @@ class BillValidationGUI:
                 # No coordination row: show warning and pass
                 self.output_box.insert(tk.END, "  ⚠️  No coordination charge (skipped)\n", "orange")
 
-            # ---- Detailed failure explanations ----
+            # ---- Detailed coordination calculation (if exists) ----
+            if coord_info.get('has_coordination', False):
+                base = coord_info.get('base_amount', 0)
+                expected = coord_info.get('expected', 0)
+                actual = coord_info.get('actual_coord', 0)
+                self.output_box.insert(tk.END, f"     Base amount (after exclusions): ₹{base:.2f}\n")
+                self.output_box.insert(tk.END, f"     {percent_used}% of base = ₹{expected:.2f}\n")
+                if checks.get('coordination_correct', True):
+                    self.output_box.insert(tk.END, f"     Actual coordination: ₹{actual:.2f} (matches expected)\n")
+                else:
+                    diff = coord_info.get('diff', 0)
+                    self.output_box.insert(tk.END, f"     Actual coordination: ₹{actual:.2f} (Difference: ₹{diff:.2f})\n", "red")
+                if coord_info.get("excluded_items"):
+                    self.output_box.insert(tk.END, f"     Excluded from base amount:\n")
+                    for item in coord_info["excluded_items"]:
+                        self.output_box.insert(tk.END, f"        - {item['Item']} (Code: {item['Work code']}): ₹{item['Cost']:.2f}\n")
+
+            # ---- Detailed failure explanations (non‑coordination) ----
             failure_details = []
 
             # Missing values
@@ -363,14 +378,6 @@ class BillValidationGUI:
                         code, name = pair_key.split('|', 1)
                         rows_str = ', '.join(str(r) for r in rows)
                         failure_details.append(f"  • Invalid pair (code: '{code}', work: '{name}') at row(s): {rows_str}")
-
-            # Coordination issues (only if coordination exists and failed)
-            if coord_info.get('has_coordination', False) and not checks.get('coordination_correct', True):
-                failure_details.append(f"  • Expected: ₹{coord_info['expected']:.2f}, Actual: ₹{coord_info['actual_coord']:.2f}, Difference: ₹{coord_info['diff']:.2f}")
-                if coord_info.get("excluded_items"):
-                    failure_details.append(f"  • Excluded from base amount:")
-                    for item in coord_info["excluded_items"]:
-                        failure_details.append(f"      - {item['Item']} (Code: {item['Work code']}): ₹{item['Cost']:.2f}")
 
             if failure_details:
                 self.output_box.insert(tk.END, "\n" + "\n".join(failure_details) + "\n", "red")
@@ -472,7 +479,7 @@ You can modify the data rows (copy/paste your own data) but **do not change the 
 | File              | Purpose                                                                                   | Required Columns (examples)                          |
 |-------------------|-------------------------------------------------------------------------------------------|------------------------------------------------------|
 | `Bill.csv`        | The actual bill data you want to validate.                                                | Contract Bill No, Item, Work code, Work, Cost, ...   |
-| `Exclude.csv`     | Patterns to exclude from the coordination base amount.                                    | Single column: list of work codes (e.g., S, C)       |
+| `Exclude.csv`     | **Exclusion conditions** – each row defines a set of column‑value pairs.                  | Any columns present in the bill; rows with **all** matching values are excluded from the coordination base amount. |
 | `Valuecheck.csv`  | Defines which values are allowed in each column (mandatory).                              | One column per required field (e.g. Contract Bill No)|
 | `Workcode.csv`    | Reference list of valid (Work code, Work) pairs (optional, but recommended).             | Work code, Work, Start, End                           |
 
@@ -484,7 +491,11 @@ You can modify the data rows (copy/paste your own data) but **do not change the 
 2. **Keep the first row (headers) untouched**.
 3. **Paste your data starting from row 2**.  
    - For `Bill.csv`, paste your bill rows.
-   - For `Exclude.csv`, list the work codes you want to exclude (one per row).
+   - For `Exclude.csv`, list **exclusion conditions**.  
+     * Each row defines one condition. A bill row is excluded **only if it matches all the columns you fill in that row**.  
+     * For example, a row with `Work code = S` excludes all rows with Work code 'S'.  
+     * A row with `Work = Site` and `Item = Cement` excludes only rows where both Work is 'Site' **and** Item is 'Cement'.  
+     * Empty cells are ignored (they do not form part of the condition).
    - For `Valuecheck.csv`, list **all allowed values** for each column.  
      * Use `any` if any non‑empty value is allowed.  
      * Use `blank` if empty cells are allowed.  
