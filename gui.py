@@ -199,6 +199,7 @@ class BillValidationGUI:
             self.output_box.insert(tk.END, "\n")
 
         # Work code reference file issues
+        # Work code reference file issues
         work_issues = validation_result.get('work_code_issues')
         if work_issues:
             self.output_box.insert(tk.END, "⚠️  WORK CODE REFERENCE FILE ISSUES\n", "red")
@@ -210,21 +211,6 @@ class BillValidationGUI:
             if work_issues.get('missing_name_rows'):
                 rows = ', '.join(str(r) for r in work_issues['missing_name_rows'])
                 details_red += f"   • Missing work name at row(s): {rows}\n"
-            if work_issues.get('duplicate_codes'):
-                details_red += "   • Duplicate work codes:\n"
-                for code, rows in work_issues['duplicate_codes'].items():
-                    rows_str = ', '.join(str(r) for r in rows)
-                    details_red += f"       {code} at rows: {rows_str}\n"
-            if work_issues.get('duplicate_names'):
-                details_red += "   • Duplicate work names:\n"
-                for name, rows in work_issues['duplicate_names'].items():
-                    rows_str = ', '.join(str(r) for r in rows)
-                    details_red += f"       {name} at rows: {rows_str}\n"
-            if work_issues.get('duplicate_pairs'):
-                details_red += "   • Duplicate (Work code, Work) pairs:\n"
-                for pair_str, rows in work_issues['duplicate_pairs'].items():
-                    rows_str = ', '.join(str(r) for r in rows)
-                    details_red += f"       {pair_str} at rows: {rows_str}\n"
             if work_issues.get('name_with_multiple_codes'):
                 details_red += "   • Work name appears with multiple different work codes:\n"
                 for name, data in work_issues['name_with_multiple_codes'].items():
@@ -233,6 +219,7 @@ class BillValidationGUI:
                     details_red += f"       '{name}' with codes {codes_str} at rows: {rows_str}\n"
             self.output_box.insert(tk.END, details_red, "red")
             self.output_box.insert(tk.END, "\n")
+
 
         # Validation rules summary
         self.output_box.insert(tk.END, "📋 VALIDATION RULES\n")

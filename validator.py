@@ -99,17 +99,13 @@ class BillValidator:
 
     def load_work_codes(self):
         """Load valid work code and work name pairs from reference CSV.
-        Also detect missing values, duplicate codes, duplicate names,
-        duplicate pairs, and names with multiple different codes."""
+        Detect missing values and work names that appear with multiple different codes."""
         if not self.work_code_path or not pd.io.common.file_exists(self.work_code_path):
             return
 
         issues = {
             'missing_code_rows': [],          # list of row numbers (1‑based) with empty work code
             'missing_name_rows': [],          # list of row numbers with empty work name
-            'duplicate_codes': {},            # code -> list of row numbers (if >1 occurrence)
-            'duplicate_names': {},            # name -> list of row numbers (if >1 occurrence)
-            'duplicate_pairs': {},            # pair (code|name) -> list of row numbers
             'name_with_multiple_codes': {}    # name -> {'codes': [code1, code2], 'rows': [row numbers]}
         }
 
@@ -128,10 +124,8 @@ class BillValidator:
                 raise ValueError("Work code file must contain columns named 'Work code' and 'Work'")
 
             # Maps to collect occurrences
-            code_occurrences = defaultdict(list)
-            name_occurrences = defaultdict(list)
-            pair_occurrences = defaultdict(list)
-            name_to_codes = defaultdict(set)   # NEW: track codes per name
+            name_occurrences = defaultdict(list)   # name -> list of row numbers
+            name_to_codes = defaultdict(set)       # name -> set of distinct codes
 
             valid_pairs = set()
 
@@ -160,13 +154,11 @@ class BillValidator:
                 pair = (code, name)
 
                 # Record occurrences
-                code_occurrences[code].append(csv_row_num)
                 name_occurrences[name].append(csv_row_num)
-                pair_occurrences[pair].append(csv_row_num)
-                name_to_codes[name].add(code)               # NEW
+                name_to_codes[name].add(code)
                 valid_pairs.add(pair)
 
-            # NEW: find names that appear with more than one distinct work code
+            # Find names that appear with more than one distinct work code
             name_multiple_codes = {}
             for name, codes in name_to_codes.items():
                 if len(codes) > 1:
@@ -178,18 +170,6 @@ class BillValidator:
             if name_multiple_codes:
                 issues['name_with_multiple_codes'] = name_multiple_codes
 
-            # Filter to duplicates (more than one occurrence)
-            for code, rows in code_occurrences.items():
-                if len(rows) > 1:
-                    issues['duplicate_codes'][code] = rows
-            for name, rows in name_occurrences.items():
-                if len(rows) > 1:
-                    issues['duplicate_names'][name] = rows
-            for pair, rows in pair_occurrences.items():
-                if len(rows) > 1:
-                    pair_str = f"{pair[0]}|{pair[1]}"
-                    issues['duplicate_pairs'][pair_str] = rows
-
             self.valid_work_pairs = valid_pairs
             # Only store issues if any were found
             if any(issues.values()):
@@ -199,9 +179,6 @@ class BillValidator:
 
         except Exception as e:
             raise ValueError(f"Error loading work codes: {e}")
-
-
-
 
 
 
