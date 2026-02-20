@@ -225,6 +225,12 @@ class BillValidationGUI:
                 for pair_str, rows in work_issues['duplicate_pairs'].items():
                     rows_str = ', '.join(str(r) for r in rows)
                     details_red += f"       {pair_str} at rows: {rows_str}\n"
+            if work_issues.get('name_with_multiple_codes'):
+                details_red += "   • Work name appears with multiple different work codes:\n"
+                for name, data in work_issues['name_with_multiple_codes'].items():
+                    codes_str = ', '.join(data['codes'])
+                    rows_str = ', '.join(str(r) for r in data['rows'])
+                    details_red += f"       '{name}' with codes {codes_str} at rows: {rows_str}\n"
             self.output_box.insert(tk.END, details_red, "red")
             self.output_box.insert(tk.END, "\n")
 
